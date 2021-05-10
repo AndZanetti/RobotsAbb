@@ -1,0 +1,1474 @@
+MODULE Cimolai_Travi(SYSMODULE)
+
+    RECORD SpostamentiCostola
+        pose LatoXMinore;
+        pose LatoXMaggiore;
+    ENDRECORD
+
+    LOCAL PERS extjoint zeroSlitta:=[2105.04,9E+09,9E+09,9E+09,9E+09,9E+09];
+    LOCAL PERS seamdata seam:=[0.5,0.5,[301,0,0,0,0,215,0,0,0],0,1,0,0,0,[0,0,0,0,0,0,0,0,0],0,0,[0,0,0,0,0,0,0,0,0],0,0,[0,0,0,0,0,0,0,0,0],0];
+    LOCAL PERS welddata weld:=[3.5,3,[301,0,0,0,0,225,0,0,0],[0,0,0,0,0,0,0,0,0]];
+    LOCAL PERS weavedata weave:=[1,0,2,3,0,0,0,0,0,0,0,0,0,0,0];
+    LOCAL PERS trackdata track:=[0,TRUE,0,[0,15,15,0,0,0,0,0,0],[0,0,0,0,0,0,0]];
+    LOCAL PERS multidata offset:=[1,0,0,-3,-3,3,3,4,0];
+
+    TASK PERS robtarget aPuntoDiZeroTravi:=[[2104,-1576.48,-49.1431],[0.157184,0.691156,0.704212,0.0410065],[-1,1,-2,0],[2105.04,9E+09,9E+09,9E+09,9E+09,9E+09]];
+    TASK PERS wobjdata wobjTravi:=[FALSE,TRUE,"",[[2204,-1576.48,-49.1431],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];
+
+
+    PROC PortaAZero()
+
+        VAR jointtarget assiCorrenti;
+        VAR robtarget posizioneCorrente;
+        VAR num eseguiSpostamento;
+
+        TPWrite "Il punto di zero memorizzato (rispetto al wobj0) è: ",\Pos:=aPuntoDiZeroTravi.trans;
+        TPReadFK eseguiSpostamento,"Vuoi spostarti al punto di zero? ",stEmpty,stEmpty,stEmpty,"Sì","No";
+
+        IF eseguiSpostamento=5 RETURN ;
+
+        posizioneCorrente:=CRobT(\WObj:=wobj0);
+        posizioneCorrente.trans.y:=-1000;
+        posizioneCorrente.trans.z:=1200;
+
+        MoveL posizioneCorrente,v200,z50,tWeldGunLunga,\WObj:=wobj0;
+
+        aHomeDyn;
+        EOffsOff;
+        PDispOff;
+
+        assiCorrenti:=CJointT();
+        assiCorrenti.extax.eax_a:=aPuntoDiZeroTravi.extax.eax_a;
+        MoveAbsJ assiCorrenti,v600,fine,tWeldGunLunga;
+        MoveL aPuntoDiZeroTravi,v400,z50,tWeldGunLunga,\WObj:=wobj0;
+
+    ENDPROC
+
+    PROC ImpostaPuntoZeroSuWorkObject(\switch robotNonSuSlitta,\num distanzaDaCostola)
+
+        VAR extjoint EXTATTUALE;
+        VAR robtarget jAppoggio;
+        VAR num distanzaDaCostolaLocale:=100;
+
+        IF Present(distanzaDaCostola) THEN
+            distanzaDaCostolaLocale:=distanzaDaCostola;
+        ENDIF
+
+        TPErase;
+
+        TPWrite "Porta il robot sul bordo della piattabanda ";
+        TPWrite "a "+NumToStr(distanzaDaCostolaLocale,0)+" mm prima della prima costola da saldare ";
+
+        Stop\NoRegain;
+        aPuntoDiZeroTravi:=CRobT(\Tool:=tWeldGunLunga\WObj:=wobj0);
+
+
+        wobjTravi.oframe.trans.x:=0;
+        wobjTravi.oframe.trans.y:=0;
+        wobjTravi.oframe.trans.z:=0;
+
+        IF Present(robotNonSuSlitta) THEN
+            wobjTravi.uframe.trans.X:=aPuntoDiZeroTravi.trans.X;
+            wobjTravi.uframe.trans.Y:=aPuntoDiZeroTravi.trans.Y+distanzaDaCostolaLocale;
+            wobjTravi.uframe.trans.Z:=aPuntoDiZeroTravi.trans.Z;
+        ELSE
+            wobjTravi.uframe.trans.X:=aPuntoDiZeroTravi.trans.X+distanzaDaCostolaLocale;
+            wobjTravi.uframe.trans.Y:=aPuntoDiZeroTravi.trans.Y;
+            wobjTravi.uframe.trans.Z:=aPuntoDiZeroTravi.trans.Z;
+        ENDIF
+
+        TPWrite "Origine (rispetto a wobj0) ",\Pos:=aPuntoDiZeroTravi.trans;
+
+        IF NOT Present(robotNonSuSlitta) THEN
+            jAppoggio:=CRobT(\WObj:=wobj0);
+            zeroSlitta:=jAppoggio.extax;
+            EXTATTUALE:=zeroSlitta;
+
+            EOffsOff;
+            EOffsSet EXTATTUALE;
+        ENDIF
+
+        MoveJ TransRobT(CRobT(\Tool:=tWeldGunLunga\WObj:=wobjTravi),-200,500,400),v500,z50,tWeldGunLunga,\WObj:=wobjTravi;
+
+    ENDPROC
+
+    PROC SaldaturaLatoTrave(string prefissoProcedura,num numeroCostole,num tipoCostola{*},num distanzaCostola{*},
+        num altezzaTraveTraPde,num profonditaAnima,num profonditaPdaSuperiore)
+
+        VAR pos posATTUALE:=[0,0,0];
+        VAR extjoint extATTUALE;
+        VAR jointtarget posizioneInizialeAssi;
+        VAR bool stopOnKeyPointsLocale;
+
+        posizioneInizialeAssi:=CJointT();
+        extATTUALE:=posizioneInizialeAssi.extax;
+
+        EOffsOff;
+
+        FOR passata FROM 1 TO 6 DO
+
+            TPWrite "**Esecuzione passata numero: "+NumToStr(passata,0);
+
+            FOR costola FROM 1 TO numeroCostole DO
+
+                wobjTravi.oframe.trans:=posATTUALE;
+                EOffsSet extATTUALE;
+
+                TPWrite "*Esecuzione costola numero: "+NumToStr(costola,0);
+                TPWrite "Offset slitta: "+NumToStr(extATTUALE.eax_a,0);
+
+                !stop;
+
+                %prefissoProcedura+NumToStr(tipoCostola{costola},0)%passata,costola,altezzaTraveTraPde,profonditaAnima,profonditaPdaSuperiore;
+
+                posATTUALE.x:=posATTUALE.x+distanzaCostola{costola};
+                extATTUALE.eax_a:=extATTUALE.eax_a+distanzaCostola{costola};
+
+            ENDFOR
+
+            posATTUALE:=[0,0,0];
+            extATTUALE:=posizioneInizialeAssi.extax;
+
+            TPWrite "Pulire la scoria";
+            LampeggianteOn;
+
+            Stop;
+
+            LampeggianteOff;
+
+        ENDFOR
+
+    ENDPROC
+
+    FUNC SpostamentiCostola TastaCostolaVerticaleLatoBasso(\num profonditaCostola,\num altezzaRicerca)
+
+        VAR SpostamentiCostola retVal:=[[[0,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];
+
+        VAR num profonditaLocale:=0;
+        VAR num altezzaLocale:=100;
+        VAR robtarget posizioneLocale;
+
+        VAR pose deltaXCostolaMeno:=[[0,0,0],[1,0,0,0]];
+        VAR pose deltaXCostolaPiu:=[[0,0,0],[1,0,0,0]];
+        VAR pose deltaYPiattabanda:=[[0,0,0],[1,0,0,0]];
+        VAR pose deltaZPiattabanda:=[[0,0,0],[1,0,0,0]];
+
+        VAR robtarget p001M:=[[-400,400,600],[0.319506,0.636409,-0.627077,0.315711],[-1,0,1,0],[-300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p002M:=[[-400,400,400],[0.31545,0.37847,-0.652945,0.575251],[-1,1,0,0],[-300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p003M:=[[400,400,500],[0.548657,0.640746,-0.398755,0.359743],[0,2,-1,0],[400,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p004M:=[[400,400,500],[1.27317E-05,-0.633293,-0.773912,-1.43863E-05],[0,-1,0,0],[400,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR robtarget pXMenoRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget pXPiuRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget pYRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget pZRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        IF Present(profonditaCostola) THEN
+            profonditaLocale:=profonditaCostola;
+        ENDIF
+        IF Present(altezzaRicerca) THEN
+            altezzaLocale:=altezzaRicerca;
+        ENDIF
+
+        PDispOff;
+
+        ! Ricerca della costola in X
+        pXMenoRicerca:=[[0,profonditaLocale-40,altezzaLocale],[0.347834,0.347835,-0.615642,0.615636],[0,1,0,0],[-300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        pXPiuRicerca:=[[0,profonditaLocale-40,altezzaLocale],[0.596187,0.59621,-0.380196,0.380192],[-1,2,-1,0],[400,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        aHomeDyn;
+
+        Movej p001M,v600,z40,tWeldGunLunga\WObj:=wobjTravi;
+        MoveL p002M,v500,z20,tWeldGunLunga\WObj:=wobjTravi;
+        Search_1D deltaXCostolaMeno,TransRobT(pXMenoRicerca,-50,0,0),pXMenoRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\Limit:=800\SchSpeed:=8;
+        MoveL p002M,v500,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+        aHomeDyn;
+
+        posizioneLocale:=CRobT(\Tool:=tWeldGunLunga,\WObj:=wobjTravi);
+
+        posizioneLocale.trans.x:=posizioneLocale.trans.x+500;
+        posizioneLocale.extax.eax_a:=posizioneLocale.extax.eax_a+500;
+
+        MoveL posizioneLocale,v800,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+        MoveJ p003M,v500,z20,tWeldGunLunga\WObj:=wobjTravi;
+        Search_1D deltaXCostolaPiu,TransRobT(pXPiuRicerca,100,0,0),pXPiuRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\PrePDisp:=deltaXCostolaMeno\SchSpeed:=8;
+
+        ! Ricerca della Z sulla piattabanda inferiore
+        pZRicerca:=[[150,-40,0],[0.500419,0.500435,-0.49958,0.499565],[-1,1,0,0],[400,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        Search_1D deltaZPiattabanda,TransRobT(pZRicerca,0,0,40),pZRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\PrePDisp:=deltaXCostolaMeno\SchSpeed:=8;
+        MoveL p003M,v500,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+        ! Ricerca della Y sulla piattabanda inferiore
+        MoveJ p004M,v400,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+        pYRicerca:=[[350,0,-40],[0.0349757,0.632313,0.772735,0.0428723],[-1,1,-2,0],[400,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        Search_1D deltaYPiattabanda,TransRobT(pYRicerca,0,60,0),pYRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\PrePDisp:=deltaXCostolaMeno\SchSpeed:=8;
+        MoveJ p004M,v500,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+        aHomeDyn;
+
+        retVal.LatoXMinore.trans.X:=deltaXCostolaMeno.trans.x+12.5;
+        retVal.LatoXMinore.trans.Y:=deltaYPiattabanda.trans.Y-12.5;
+        retVal.LatoXMinore.trans.Z:=deltaZPiattabanda.trans.Z-12.5;
+
+        retVal.LatoXMaggiore.trans.X:=deltaXCostolaPiu.trans.x-12.5;
+        retVal.LatoXMaggiore.trans.Y:=deltaYPiattabanda.trans.Y-12.5;
+        retVal.LatoXMaggiore.trans.Z:=deltaZPiattabanda.trans.Z-12.5;
+
+        RETURN retVal;
+
+    ENDFUNC
+
+    FUNC SpostamentiCostola TastaCostolaVerticaleLatoAlto(num altezzaTraveTraPde,num profonditaPdaSup,\num profonditaCostola,\num altezzaRicerca)
+
+        VAR SpostamentiCostola retVal:=[[[0,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];
+
+        VAR num profonditaLocale:=0;
+        VAR num altezzaLocale:=-100;
+
+        VAR pose deltaXCostolaMeno:=[[0,0,0],[1,0,0,0]];
+        VAR pose deltaXCostolaPiu:=[[0,0,0],[1,0,0,0]];
+        VAR pose deltaYPiattabanda:=[[0,0,0],[1,0,0,0]];
+        VAR pose deltaZPiattabanda:=[[0,0,0],[1,0,0,0]];
+
+        VAR robtarget p002M:=[[-200,500,1800],[0.50656,0.506588,0.493352,-0.493326],[-1,-1,0,1],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p003M:=[[300,500,1800],[0.50656,0.506588,0.493352,-0.493326],[-1,-1,0,1],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p004M:=[[300,500,1800],[0.741275,1.17383E-05,-1.64356E-05,0.671201],[-1,0,1,1],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR robtarget pXMenoRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget pXPiuRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget pYRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget pZRicerca:=[[0,0,0],[0,0,0,0],[0,-1,0,0],[0,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        IF Present(profonditaCostola) THEN
+            profonditaLocale:=profonditaCostola;
+        ENDIF
+        IF Present(altezzaRicerca) THEN
+            altezzaLocale:=altezzaRicerca;
+        ENDIF
+
+        p004M.trans.z:=altezzaTraveTraPde;
+
+        p002M.trans.z:=altezzaTraveTraPde+altezzaLocale;
+        p003M.trans.z:=altezzaTraveTraPde+altezzaLocale;
+
+        PDispOff;
+
+        ! Ricerca della Y sulla piattabanda superiore
+        MoveJ p004M,v600,z20,tWeldGunLunga\WObj:=wobjTravi;
+        pYRicerca:=[[150,profonditaPdaSup,altezzaTraveTraPde+50],[0.741275,1.17383E-05,-1.64356E-05,0.671201],[-1,0,1,1],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        Search_1D deltaYPiattabanda,TransRobT(pYRicerca,0,60,0),pYRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\SchSpeed:=8;
+        MoveJ p004M,v600,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+        aHomeDyn;
+
+        ! Ricerca della costola in X
+        pXMenoRicerca:=[[0,profonditaLocale-60,altezzaTraveTraPde+altezzaLocale],[0.50656,0.506588,0.493352,-0.493326],[-1,-1,0,1],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        pXPiuRicerca:=[[0,profonditaLocale-60,altezzaTraveTraPde+altezzaLocale],[0.50656,0.506588,0.493352,-0.493326],[-1,-1,0,1],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        MoveJ p002M,v600,z20,tWeldGunLunga\WObj:=wobjTravi;
+        Search_1D deltaXCostolaMeno,TransRobT(pXMenoRicerca,-50,0,0),pXMenoRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\PrePDisp:=deltaYPiattabanda\SchSpeed:=8;
+
+        MoveL p002M,v600,z20,tWeldGunLunga\WObj:=wobjTravi;
+        MoveL p003M,v600,z20,tWeldGunLunga\WObj:=wobjTravi;
+        Search_1D deltaXCostolaPiu,TransRobT(pXPiuRicerca,100,0,0),pXPiuRicerca,v400,tWeldGunLunga\WObj:=wobjTravi\PrePDisp:=deltaXCostolaMeno\SchSpeed:=8;
+
+        ! Ricerca della Z sulla piattabanda superiore
+        pZRicerca:=[[150,profonditaPdaSup-60,altezzaTraveTraPde],[0.50656,0.506588,0.493352,-0.493326],[-1,-1,0,1],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        Search_1D deltaZPiattabanda,TransRobT(pZRicerca,0,0,-100),pZRicerca,v300,tWeldGunLunga\WObj:=wobjTravi\PrePDisp:=deltaYPiattabanda\SchSpeed:=8;
+        MoveL p003M,v600,z20,tWeldGunLunga\WObj:=wobjTravi;
+
+
+        aHomeDyn;
+
+        retVal.LatoXMinore.trans.X:=deltaXCostolaMeno.trans.x+12.5;
+        retVal.LatoXMinore.trans.Y:=deltaYPiattabanda.trans.Y-12.5;
+        retVal.LatoXMinore.trans.Z:=deltaZPiattabanda.trans.Z+12.5;
+
+        retVal.LatoXMaggiore.trans.X:=deltaXCostolaPiu.trans.x-12.5;
+        retVal.LatoXMaggiore.trans.Y:=deltaYPiattabanda.trans.Y-12.5;
+        retVal.LatoXMaggiore.trans.Z:=deltaZPiattabanda.trans.Z+12.5;
+
+        RETURN retVal;
+
+    ENDFUNC
+
+    PROC SaldaCostolaOrizzontale(num gola,num numeroPassata,num numeroCostola,
+        num daQuotaY,num aQuotaY,
+        SpostamentiCostola spostamentoBasso,\num offsetVerticale,\string latoDaSaldare,\string pathSuffix)
+
+        VAR num offsetVerticaleLocale:=0;
+
+        VAR robtarget p001M:=[[-200,550,1700],[0.297652,0.635595,0.677967,0.218594],[-1,1,-2,0],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p001A:=[[0,0,0],[0.297652,0.635595,0.677967,0.218594],[-1,1,-2,0],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p002A:=[[0,0,0],[0.297652,0.635595,0.677967,0.218594],[-1,1,-2,0],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR robtarget p002M:=[[400,550,1700],[0.273338,-0.506813,-0.771895,0.269453],[0,-2,0,0],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p003A:=[[0,0,0],[0.273338,-0.506813,-0.771895,0.269453],[0,-2,0,0],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p004A:=[[0,0,0],[0.273338,-0.506813,-0.771895,0.269453],[0,-2,0,0],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR string latoDaSaldareLocale:="E";
+
+        VAR string pathName:="CostolaOrizzontale_";
+
+        IF (Gola=5 AND numeroPassata>1) RETURN ;
+        IF (Gola=7 AND numeroPassata>3) RETURN ;
+        IF (Gola=8.5 AND numeroPassata>4) RETURN ;
+        IF (Gola=10 AND numeroPassata>4) RETURN ;
+
+        !Controlla che la costola sia saldabile
+        IF NOT (gola=5 OR gola=7 OR gola=8.5 OR gola=10) THEN
+
+            TPWrite "**** GOLA NON IMPLEMENTATA: ",\Num:=gola;
+            RETURN ;
+
+        ENDIF
+
+        pathName:=pathName+NumToStr(numeroCostola,0);
+        IF Present(pathSuffix) pathName:=pathName+pathSuffix;
+
+        IF Present(offsetVerticale) offsetVerticaleLocale:=offsetVerticale;
+        IF Present(latoDaSaldare) latoDaSaldareLocale:=latoDaSaldare;
+
+        seam:=GetSeamDataSaldatura("O",gola,numeroPassata);
+        weld:=GetWeldDataSaldatura("O",gola,numeroPassata);
+        weave:=GetWeaveDataSaldatura("O",gola,numeroPassata);
+        track:=GetTrackDataSaldatura("O",gola,numeroPassata);
+
+        p001A.trans.x:=-5;
+        p001A.trans.y:=daQuotay;
+        p001A.trans.z:=offsetVerticaleLocale+5;
+
+        p002A.trans.x:=-5;
+        p002A.trans.y:=aQuotaY;
+        p002A.trans.z:=offsetVerticaleLocale+5;
+
+        p003A.trans.x:=5;
+        p003A.trans.y:=aQuotaY;
+        p003A.trans.z:=offsetVerticaleLocale+5;
+
+        p004A.trans.x:=5;
+        p004A.trans.y:=daQuotay;
+        p004A.trans.z:=offsetVerticaleLocale+5;
+
+        aspirazioneon;
+
+        IF numeroPassata=1 THEN
+
+            !---- Passata LatoXMeno *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                MoveJ p001M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispSet spostamentoBasso.LatoXMinore;
+                MoveL RelTool(p001A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ArcLStart p001A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\seamname:="CostolaOrizzontale_LatoXMeno";
+                ArcLEnd p002A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+                MpSavePath pathName+"_LatoXMeno"\seamname:="CostolaOrizzontale_LatoXMeno";
+                MoveL RelTool(p002A,300,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveJ p001M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                PDispOff;
+
+            ENDIF
+
+            !---- *** Passata LatoXPiu *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                MoveJ p002M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispSet spostamentoBasso.LatoXMaggiore;
+                MoveL RelTool(p003A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ArcLStart p003A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\seamname:="CostolaOrizzontale_LatoXPiu";
+                ArcLEnd p004A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+                MpSavePath pathName+"_LatoXPiu"\seamname:="CostolaOrizzontale_LatoXPiu";
+                MoveL RelTool(p004A,300,0,-200),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveJ p002M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                PDispOff;
+
+            ENDIF
+
+            aHomeDyn;
+
+        ELSE
+
+            offset:=GetOffestsSaldatura("O",gola,numeroPassata);
+
+            !---- Passata LatoXMeno *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                MoveJ p001M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                MpLoadPath pathName+"_LatoXMeno";
+                MoveL RelTool(p001A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                ArcRepL\Start\End,offset,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\seamname:="CostolaOrizzontale_LatoXMeno";
+                MoveL RelTool(p002A,300,0,-200),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveJ p001M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+            ENDIF
+
+            !---- *** Passata LatoXPiu *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                MoveJ p002M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                MpLoadPath pathName+"_LatoXPiu";
+                MoveL RelTool(p003A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                ArcRepL\Start\End,offset,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\seamname:="CostolaOrizzontale_LatoXPiu";
+                MoveL RelTool(p004A,300,0,-200),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveL p002M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+            ENDIF
+
+            aHomeDyn;
+
+        ENDIF
+
+        aspirazioneoff;
+        rPulizia_LungaEvoNoSpray;
+
+    ENDPROC
+
+    PROC SaldaCostolaVerticale(num gola,num numeroPassata,num numeroCostola,
+        num posizioneYAnima,num daQuotaZ,num aQuotaZ,
+        SpostamentiCostola spostamentoBasso,SpostamentiCostola spostamentoAlto,\num lunghezzaTrattiMultipass,\string latoDaSaldare,\string pathSuffix)
+
+        VAR SpostamentiCostola spostamentoBassoCalcolato:=[[[0,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];
+        VAR string latoDaSaldareLocale:="E";
+        VAR num lunghezzaTrattiMultipassLocale:=-1;
+
+        VAR weavedata waveRoot;
+        VAR num gradienteInclinazioneInY;
+        VAR num gradienteInclinazioneInX;
+
+        VAR string pathName:="CostolaVerticale_";
+
+        IF (gola=5 AND numeroPassata>1) return ;
+        IF (gola=7 AND numeroPassata>3) return ;
+        IF (gola=10 AND numeroPassata>3) return ;
+
+        !Controlla che la costola sia saldabile
+        IF NOT (gola=5 OR gola=7 OR gola=8.5 OR gola=10) THEN
+
+            TPWrite "**** GOLA NON IMPLEMENTATA: ",\Num:=gola;
+            RETURN ;
+
+        ENDIF
+
+        pathName:=pathName+NumToStr(numeroCostola,0);
+        IF Present(pathSuffix) pathName:=pathName+pathSuffix;
+        IF Present(lunghezzaTrattiMultipass) lunghezzaTrattiMultipassLocale:=Abs(lunghezzaTrattiMultipass);
+        IF Present(latoDaSaldare) latoDaSaldareLocale:=latoDaSaldare;
+
+        seam:=GetSeamDataSaldatura("V",gola,numeroPassata);
+        weld:=GetWeldDataSaldatura("V",gola,numeroPassata);
+        weave:=GetWeaveDataSaldatura("V",gola,numeroPassata);
+        track:=GetTrackDataSaldatura("V",gola,numeroPassata);
+        offset:=GetOffestsSaldatura("V",gola,numeroPassata);
+
+        gradienteInclinazioneInY:=(spostamentoAlto.LatoXMaggiore.trans.y-spostamentoBasso.LatoXMaggiore.trans.y)/aQuotaZ;
+        gradienteInclinazioneInX:=(spostamentoAlto.LatoXMaggiore.trans.x-spostamentoBasso.LatoXMaggiore.trans.x)/aQuotaZ;
+
+        spostamentoBassoCalcolato.LatoXMaggiore.trans.z:=spostamentoBasso.LatoXMaggiore.trans.z;
+        spostamentoBassoCalcolato.LatoXMinore.trans.z:=spostamentoBasso.LatoXMinore.trans.z;
+
+        IF daQuotaZ<1300 AND aQuotaZ<=1300 THEN
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.y:=spostamentoBasso.LatoXMaggiore.trans.y+gradienteInclinazioneInY*daQuotaZ;
+            spostamentoBassoCalcolato.LatoXMinore.trans.y:=spostamentoBasso.LatoXMinore.trans.y+gradienteInclinazioneInY*daQuotaZ;
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.x:=spostamentoBasso.LatoXMaggiore.trans.x+gradienteInclinazioneInX*daQuotaZ;
+            spostamentoBassoCalcolato.LatoXMinore.trans.x:=spostamentoBasso.LatoXMinore.trans.x+gradienteInclinazioneInX*daQuotaZ;
+
+            SaldaCostolaVerticaleSotto1300 numeroPassata,latoDaSaldareLocale,posizioneYAnima,daQuotaZ,aQuotaZ,
+                        spostamentoBassoCalcolato,spostamentoBassoCalcolato,pathName,lunghezzaTrattiMultipassLocale,seam,weld,weave,track,offset;
+
+        ELSEIF daQuotaZ<1300 AND aQuotaZ>1300 THEN
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.y:=spostamentoBasso.LatoXMaggiore.trans.y+gradienteInclinazioneInY*daQuotaZ;
+            spostamentoBassoCalcolato.LatoXMinore.trans.y:=spostamentoBasso.LatoXMinore.trans.y+gradienteInclinazioneInY*daQuotaZ;
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.x:=spostamentoBasso.LatoXMaggiore.trans.x+gradienteInclinazioneInX*daQuotaZ;
+            spostamentoBassoCalcolato.LatoXMinore.trans.x:=spostamentoBasso.LatoXMinore.trans.x+gradienteInclinazioneInX*daQuotaZ;
+
+            SaldaCostolaVerticaleSotto1300 numeroPassata,latoDaSaldareLocale,posizioneYAnima,daQuotaZ,1300,
+                spostamentoBassoCalcolato,spostamentoBassoCalcolato,pathName+"A",lunghezzaTrattiMultipassLocale,seam,weld,weave,track,offset;
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.y:=spostamentoBasso.LatoXMaggiore.trans.y+gradienteInclinazioneInY*1300;
+            spostamentoBassoCalcolato.LatoXMinore.trans.y:=spostamentoBasso.LatoXMinore.trans.y+gradienteInclinazioneInY*1300;
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.x:=spostamentoBasso.LatoXMaggiore.trans.x+gradienteInclinazioneInX*1300;
+            spostamentoBassoCalcolato.LatoXMinore.trans.x:=spostamentoBasso.LatoXMinore.trans.x+gradienteInclinazioneInX*1300;
+
+            SaldaCostolaVerticaleSopra1300 numeroPassata,latoDaSaldareLocale,posizioneYAnima,1295,aQuotaZ,
+                        spostamentoBassoCalcolato,spostamentoBassoCalcolato,pathName+"B",lunghezzaTrattiMultipassLocale,seam,weld,weave,track,offset;
+
+        ELSE
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.y:=spostamentoBasso.LatoXMaggiore.trans.y+gradienteInclinazioneInY*daQuotaZ;
+            spostamentoBassoCalcolato.LatoXMinore.trans.y:=spostamentoBasso.LatoXMinore.trans.y+gradienteInclinazioneInY*daQuotaZ;
+
+            spostamentoBassoCalcolato.LatoXMaggiore.trans.x:=spostamentoBasso.LatoXMaggiore.trans.x+gradienteInclinazioneInX*daQuotaZ;
+            spostamentoBassoCalcolato.LatoXMinore.trans.x:=spostamentoBasso.LatoXMinore.trans.x+gradienteInclinazioneInX*daQuotaZ;
+
+            SaldaCostolaVerticaleSopra1300 numeroPassata,latoDaSaldareLocale,posizioneYAnima,daQuotaZ,aQuotaZ,
+                        spostamentoBassoCalcolato,spostamentoBassoCalcolato,pathName,lunghezzaTrattiMultipassLocale,seam,weld,weave,track,offset;
+
+        ENDIF
+
+
+
+    ENDPROC
+
+    LOCAL PROC SaldaCostolaVerticaleSotto1300(num numeroPassata,string latoDaSaldareLocale,
+        num posizioneYAnima,num daQuotaZ,num aQuotaZ,
+        SpostamentiCostola spostamentoBasso,SpostamentiCostola spostamentoAlto,string pathName,num lunghezzaTrattiMultipass,
+        PERS seamdata seam,PERS welddata weld,PERS weavedata weave,PERS trackdata track,PERS multidata offset)
+
+        VAR robtarget p001A:=[[0,0,0],[0.359902,0.75591,-0.130368,0.531107],[0,1,-1,0],[-500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p002A:=[[0,0,0],[0.425482,0.666401,-0.121638,0.600065],[0,1,-1,0],[-500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p003A:=[[0,0,0],[0.425482,0.666401,-0.121638,0.600065],[0,1,-1,0],[-500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR robtarget p021A:=[[0,0,0],[0.591337,0.286045,-0.718253,0.22937],[-1,-2,3,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p022A:=[[0,0,0],[0.67418,0.236376,-0.655207,0.245584],[0,-2,3,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p023A:=[[0,0,0],[0.67418,0.236376,-0.655207,0.245584],[0,-2,3,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR num trattoInzialeEndIndex;
+
+        !latoXMeno
+        p001A.trans.x:=-3;
+        p001A.trans.y:=posizioneYAnima+3;
+        p001A.trans.z:=daQuotaZ+3;
+
+        p002A.trans.x:=-3;
+        p002A.trans.y:=posizioneYAnima+3;
+        p002A.trans.z:=daQuotaZ+50;
+
+        p003A.trans.x:=-3;
+        p003A.trans.y:=posizioneYAnima+3;
+        p003A.trans.z:=aQuotaZ;
+
+        !latoXPiù
+        p021A.trans.x:=3;
+        p021A.trans.y:=posizioneYAnima+3;
+        p021A.trans.z:=daQuotaZ+3;
+
+        p022A.trans.x:=3;
+        p022A.trans.y:=posizioneYAnima+3;
+        p022A.trans.z:=daQuotaZ+50;
+
+        p023A.trans.x:=3;
+        p023A.trans.y:=posizioneYAnima+3;
+        p023A.trans.z:=aQuotaZ;
+
+        aspirazioneon;
+
+        IF numeroPassata=1 THEN
+
+            !---- Passata LatoXMeno *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                ! Approccio
+                SpostaSlitta -500,tWeldGunLunga;
+                MoveJ TransRobT(p001A,-300,800,600),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispSet spostamentoBasso.LatoXMinore;
+                MoveL RelTool(p001A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+                ArcLStart p001A,v100,seam,weld,\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\seamname:="CostolaVerticale_LatoXMeno";
+                ArcL p002A,v100,seam,weld,\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+
+                PDispSet spostamentoAlto.LatoXMinore;
+
+                ArcLEnd p003A,v100,seam,weld,\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+                MpSavePath pathName+"_LatoXMeno"\seamname:="CostolaVerticale_LatoXMeno";
+
+                ! Svincolo
+                MoveL RelTool(p003A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveJ TransRobT(p003A,-300,500,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispOff;
+                aHomeDyn;
+
+                rPulizia_LungaEvoSpray;
+
+            ENDIF
+
+
+            !---- *** Passata LatoXPiu *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                ! Approccio
+                SpostaSlitta 500,tWeldGunLunga;
+                MoveJ TransRobT(p021A,250,650,400),v200,z50,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispSet spostamentoBasso.LatoXMaggiore;
+                MoveL RelTool(p021A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+
+                ArcLStart p021A,v100,seam,weld\Weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\SeamName:="CostolaVerticale_LatoXPiu";
+                ArcL p022A,v100,seam,weld\Weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+
+                PDispSet spostamentoAlto.LatoXMaggiore;
+
+                ArcLEnd p023A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+                MpSavePath pathName+"_LatoXPiu"\seamname:="CostolaVerticale_LatoXPiu";
+
+                ! Svincolo
+                MoveL RelTool(p023A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                !MoveJ TransRobT(p023A,250,450,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveL [[400,-50,1200],[0.158879,0.776262,0.580222,-0.188461],[0,-1,0,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]],v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispOff;
+                aHomeDyn;
+
+                rPulizia_LungaEvoSpray;
+
+            ENDIF
+            aHomeDyn;
+
+        ELSE
+
+            !---- Passata LatoXMeno *** ----
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                MpLoadPath pathName+"_LatoXMeno";
+
+                ! Approccio
+                SpostaSlitta -500,tWeldGunLunga;
+                MoveJ TransRobT(p001A,-300,800,600),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveL RelTool(p001A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+
+                IF lunghezzaTrattiMultipass<>-1 THEN
+
+                    trattoInzialeEndIndex:=MpGetIndexAtLenght(lunghezzaTrattiMultipass);
+
+                    ArcRepL\Start\End,offset\EndInd:=trattoInzialeEndIndex,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\SeamName:="CostolaVerticale_LatoXMeno";
+
+                ELSE
+                    ArcRepL\Start\End,offset,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\seamname:="CostolaVerticale_LatoXMeno";
+                ENDIF
+
+
+                ! Svincolo
+                MoveL RelTool(p003A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveJ TransRobT(p003A,-300,500,500),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                aHomeDyn;
+
+                rPulizia_LungaEvoSpray;
+
+            ENDIF
+
+            !---- *** Passata LatoXPiu *** ----
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                MpLoadPath pathName+"_LatoXPiu";
+
+                ! Approccio
+                SpostaSlitta 500,tWeldGunLunga;
+                MoveJ TransRobT(p021A,250,650,400),v200,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveL RelTool(p021A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+                IF lunghezzaTrattiMultipass<>-1 THEN
+
+                    trattoInzialeEndIndex:=MpGetIndexAtLenght(lunghezzaTrattiMultipass);
+
+                    ArcRepL\Start\End,offset\EndInd:=trattoInzialeEndIndex,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\SeamName:="CostolaVerticale_LatoXPiu";
+
+                ELSE
+                    ArcRepL\Start\End,offset,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\seamname:="CostolaVerticale_LatoXPiu";
+                ENDIF
+
+                ! Svincolo
+                MoveL RelTool(p023A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveL [[400,-50,1200],[0.158879,0.776262,0.580222,-0.188461],[0,-1,0,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]],v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+
+                rPulizia_LungaEvoNoSpray;
+
+            ENDIF
+            aHomeDyn;
+
+        ENDIF
+
+        aspirazioneoff;
+
+    ENDPROC
+
+    LOCAL PROC SaldaCostolaVerticaleSopra1300(num numeroPassata,string latoDaSaldareLocale,
+        num posizioneYAnima,num daQuotaZ,num aQuotaZ,
+        SpostamentiCostola spostamentoBasso,SpostamentiCostola spostamentoAlto,string pathName,num lunghezzaTrattiMultipass,
+        PERS seamdata seam,PERS welddata weld,PERS weavedata weave,PERS trackdata track,PERS multidata offset)
+
+        VAR robtarget p004A:=[[0,0,0],[0.777054,0.408484,0.478663,-0.0144958],[0,1,-2,0],[-500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p005A:=[[0,0,0],[0.777054,0.408484,0.478663,-0.0144958],[0,1,-2,0],[-500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR robtarget p024A:=[[0,0,0],[0.0816396,0.510108,0.39984,-0.757135],[-1,-2,1,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p025A:=[[0,0,0],[0.0816396,0.510108,0.39984,-0.757135],[-1,-2,1,0],[500,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR num trattoFinaleStartIndex;
+
+        !latoXMeno
+        p004A.trans.x:=-3;
+        p004A.trans.y:=posizioneYAnima+3;
+        p004A.trans.z:=daQuotaZ;
+
+        p005A.trans.x:=-3;
+        p005A.trans.y:=posizioneYAnima+3;
+        p005A.trans.z:=aQuotaZ-3;
+
+        !latoXPiù
+        p024A.trans.x:=3;
+        p024A.trans.y:=posizioneYAnima+3;
+        p024A.trans.z:=daQuotaZ;
+
+        p025A.trans.x:=3;
+        p025A.trans.y:=posizioneYAnima+3;
+        p025A.trans.z:=aQuotaZ-3;
+
+        aspirazioneon;
+
+        IF numeroPassata=1 THEN
+
+            !---- Passata LatoXMeno *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                ! Approccio
+                aHomeDyn;
+
+                SpostaSlitta -500,tWeldGunLunga;
+                MoveJ TransRobT(p004A,-300,700,100),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispSet spostamentoBasso.LatoXMinore;
+                MoveL RelTool(p004A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+                ArcLStart p004A,v100,seam,weld,\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\seamname:="CostolaVerticale_LatoXMeno";
+
+                PDispSet spostamentoAlto.LatoXMinore;
+
+                ArcLEnd p005A,v100,seam,weld,\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+                MpSavePath pathName+"_LatoXMeno"\seamname:="CostolaVerticale_LatoXMeno";
+
+                ! Svincolo
+                MoveL RelTool(p005A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveJ TransRobT(p005A,-300,500,-200),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                PDispOff;
+                aHomeDyn;
+
+                rPulizia_LungaEvoSpray;
+
+            ENDIF
+
+
+            !---- *** Passata LatoXPiu *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                ! Approccio
+                SpostaSlitta 500,tWeldGunLunga;
+
+                RiorientaFuoriIngombro tWeldGunLunga,wobjTravi,TransRobT(p024A,300,500,500);
+
+                MoveJ TransRobT(p024A,300,500,100),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                PDispSet spostamentoBasso.LatoXMaggiore;
+                MoveL RelTool(p024A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+
+                ArcLStart p024A,v100,seam,weld\Weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\SeamName:="CostolaVerticale_LatoXPiu";
+
+                PDispSet spostamentoAlto.LatoXMaggiore;
+
+                ArcLEnd p025A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+                MpSavePath pathName+"_LatoXPiu"\seamname:="CostolaVerticale_LatoXPiu";
+
+                ! Svincolo
+                MoveL RelTool(p025A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                MoveJ TransRobT(p025A,300,700,-200),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                PDispOff;
+
+                rPulizia_LungaEvoNoSpray;
+
+            ENDIF
+            aHomeDyn;
+
+        ELSE
+
+            !---- Passata LatoXMeno *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                MpLoadPath pathName+"_LatoXMeno";
+
+                ! Approccio
+                SpostaSlitta -500,tWeldGunLunga;
+                MoveJ TransRobT(p004A,-300,500,100),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                MoveL RelTool(p004A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+
+                IF lunghezzaTrattiMultipass<>-1 THEN
+
+                    trattoFinaleStartIndex:=-1*MpGetIndexAtLenght(lunghezzaTrattiMultipass);
+
+                    ArcRepL\Start\End,offset\StartInd:=trattoFinaleStartIndex,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\SeamName:="CostolaVerticale_LatoXMeno";
+
+                ELSE
+                    ArcRepL\Start\End,offset,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\seamname:="CostolaVerticale_LatoXMeno";
+                ENDIF
+
+
+                ! Svincolo
+                MoveL RelTool(p005A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveJ TransRobT(p005A,-300,500,-200),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                aHomeDyn;
+
+                rPulizia_LungaEvoSpray;
+
+            ENDIF
+
+            !---- *** Passata LatoXPiu *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                MpLoadPath pathName+"_LatoXPiu";
+
+                ! Approccio
+                SpostaSlitta 500,tWeldGunLunga;
+                RiorientaFuoriIngombro tWeldGunLunga,wobjTravi,TransRobT(p024A,300,500,500);
+
+                MoveJ TransRobT(p024A,300,500,100),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                MoveL RelTool(p024A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+                IF lunghezzaTrattiMultipass<>-1 THEN
+
+                    trattoFinaleStartIndex:=-1*MpGetIndexAtLenght(lunghezzaTrattiMultipass);
+
+                    ArcRepL\Start\End,offset\StartInd:=trattoFinaleStartIndex,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\SeamName:="CostolaVerticale_LatoXPiu";
+
+                ELSE
+                    ArcRepL\Start\End,offset,v300,seam,weld,weave,z5,tWeldGunLunga\WObj:=wobjTravi\seamname:="CostolaVerticale_LatoXPiu";
+                ENDIF
+
+                ! Svincolo
+                MoveL RelTool(p025A,200,0,-300),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveJ TransRobT(p025A,300,700,-200),v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                rPulizia_LungaEvoNoSpray;
+
+            ENDIF
+            aHomeDyn;
+
+        ENDIF
+
+        aspirazioneoff;
+
+    ENDPROC
+
+    PROC SaldaCostolaSovratesta(num gola,num numeroPassata,num numeroCostola,
+        num daQuotaY,num aQuotaY,num altezzaTraveTraPde,
+        SpostamentiCostola spostamentoAlto,\string latoDaSaldare,\string pathSuffix)
+
+        VAR robtarget p001M:=[[-200,700,-200],[0.710197,0.201237,0.229524,0.634384],[-1,-1,1,1],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p001A:=[[0,0,0],[0.710197,0.201237,0.229524,0.634384],[-1,-1,1,1],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p002A:=[[0,0,0],[0.710197,0.201237,0.229524,0.634384],[-1,-1,1,1],[-200,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR robtarget p002M:=[[200,700,-200],[0.532538,-0.261473,-0.182349,0.784082],[0,-2,0,0],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p003A:=[[0,0,0],[0.532538,-0.261473,-0.182349,0.784082],[0,-2,0,0],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+        VAR robtarget p004A:=[[0,0,0],[0.532538,-0.261473,-0.182349,0.784082],[0,-2,0,0],[300,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+        VAR string latoDaSaldareLocale:="E";
+        VAR string pathName:="CostolaSovratesta_";
+
+        IF (gola=5 AND numeroPassata>1) return ;
+        IF (gola=7 AND numeroPassata>1) return ;
+        IF (gola=10 AND numeroPassata>1) return ;
+
+        pathName:=pathName+NumToStr(numeroCostola,0);
+        IF Present(pathSuffix) pathName:=pathName+pathSuffix;
+
+        IF Present(latoDaSaldare) latoDaSaldareLocale:=latoDaSaldare;
+
+        seam:=GetSeamDataSaldatura("S",gola,numeroPassata);
+        weld:=GetWeldDataSaldatura("S",gola,numeroPassata);
+        weave:=GetWeaveDataSaldatura("S",gola,numeroPassata);
+        track:=GetTrackDataSaldatura("S",gola,numeroPassata);
+
+        p001M.trans.z:=altezzaTraveTraPde+p001M.trans.z;
+
+        p001A.trans.x:=-5;
+        p001A.trans.y:=aQuotay;
+        p001A.trans.z:=altezzaTraveTraPde-4;
+
+        p002A.trans.x:=-5;
+        p002A.trans.y:=daQuotay;
+        p002A.trans.z:=altezzaTraveTraPde-4;
+
+        p002M.trans.z:=altezzaTraveTraPde-4;
+
+        p003A.trans.x:=5;
+        p003A.trans.y:=daQuotay;
+        p003A.trans.z:=altezzaTraveTraPde-4;
+
+        p004A.trans.x:=5;
+        p004A.trans.y:=aQuotay;
+        p004A.trans.z:=altezzaTraveTraPde-4;
+
+        aspirazioneon;
+
+            !---- Passata LatoXMeno *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="M" OR latoDaSaldareLocale="-" OR latoDaSaldareLocale="m" THEN
+
+                ! Approccio
+                MoveJ p001M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+                PDispSet spostamentoAlto.LatoXMinore;
+                MoveL RelTool(p001A,100,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ArcLStart p001A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\seamname:="CostolaSovratesta_LatoXMeno";
+
+                ArcLEnd p002A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+
+                MpSavePath pathName+"_LatoXMeno"\seamname:="CostolaSovratesta_LatoXMeno";
+
+                ! Svincolo
+                MoveL RelTool(p002A,300,0,-150),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveJ p001M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                PDispOff;
+
+            ENDIF
+
+            !---- *** Passata LatoXPiu *** ----
+
+            IF latoDaSaldareLocale="E" OR latoDaSaldareLocale="P" OR latoDaSaldareLocale="+" OR latoDaSaldareLocale="p" THEN
+
+                ! Approccio
+                MoveJ p002M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+
+                ! Saldatura
+                PDispSet spostamentoAlto.LatoXMaggiore;
+                MoveL RelTool(p003A,0,0,-100),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+
+                ArcLStart p003A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track\seamname:="CostolaSovratesta_LatoXPiu";
+
+                ArcLEnd p004A,v100,seam,weld\weave:=weave,fine,tWeldGunLunga\WObj:=wobjTravi\Track:=track;
+
+                MpSavePath pathName+"_LatoXPiu"\seamname:="CostolaSovratesta_LatoXPiu";
+
+                ! Svincolo
+                MoveL RelTool(p004A,400,0,-300),v300,z1,tWeldGunLunga\WObj:=wobjTravi;
+                MoveJ p002M,v400,z40,tWeldGunLunga\WObj:=wobjTravi;
+                PDispOff;
+
+            ENDIF
+            
+            aHomeDyn;
+
+        aspirazioneoff;
+
+        rPulizia_LungaEvoNoSpray;
+
+    ENDPROC
+
+
+    LOCAL FUNC seamdata GetSeamDataSaldatura(string tipoSaldatura,num gola,num numeroPassata)
+
+        ! I seamdata sono tutti uguali per ogni passata
+        IF tipoSaldatura="V" THEN
+
+            TEST gola
+            CASE 5:
+                RETURN sm_jonica_a10V_R;
+            CASE 7:
+                RETURN sm_jonica_a7V_R;
+            CASE 10:
+                RETURN sm_jonica_a10V_R;
+            DEFAULT:
+            ENDTEST
+
+        ELSEIF tipoSaldatura="O" THEN
+
+            TEST gola
+            CASE 5:
+                RETURN sm_jonica_a10Or_R;
+            CASE 7:
+                RETURN sm_jonica_a10Or_R;
+            CASE 8.5:
+                RETURN sm_jonica_a85Or_R;
+            CASE 10:
+                RETURN sm_jonica_a10Or_R;
+            DEFAULT:
+            ENDTEST
+
+        ELSEIF tipoSaldatura="S" THEN
+
+            TEST gola
+            CASE 5:
+                RETURN sm_jonica_a10St_R;
+            CASE 7:
+                RETURN sm_jonica_a10St_R;
+            CASE 10:
+                RETURN sm_jonica_a10St_R;
+            DEFAULT:
+            ENDTEST
+
+        ENDIF
+
+    ENDFUNC
+
+    LOCAL FUNC welddata GetWeldDataSaldatura(string tipoSaldatura,num gola,num numeroPassata)
+
+        IF tipoSaldatura="V" THEN
+
+            TEST gola
+            CASE 5:
+                RETURN wd_jonica_a10V_R;
+
+            CASE 7:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wd_jonica_a7V_R;
+                DEFAULT:
+                    RETURN wd_jonica_a7V_C1;
+                ENDTEST
+
+            CASE 10:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wd_jonica_a10V_R;
+                DEFAULT:
+                    RETURN wd_jonica_a10V_C1;
+                ENDTEST
+
+            DEFAULT:
+            ENDTEST
+
+        ELSEIF tipoSaldatura="O" THEN
+
+            TEST gola
+
+            CASE 5:
+                RETURN wd_jonica_a10Or_R;
+
+            CASE 7:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wd_jonica_a10Or_R;
+                CASE 2:
+                    RETURN wd_jonica_a10Or_C1;
+                CASE 3:
+                    RETURN wd_jonica_a10Or_C2;
+                CASE 4:
+                    RETURN wd_jonica_a10Or_C3;
+                DEFAULT:
+                ENDTEST
+
+            CASE 8.5:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wd_jonica_a85Or_R;
+                CASE 2:
+                    RETURN wd_jonica_a85Or_C1;
+                CASE 3:
+                    RETURN wd_jonica_a85Or_C2;
+                CASE 4:
+                    RETURN wd_jonica_a85Or_C3;
+                DEFAULT:
+                ENDTEST
+
+            CASE 10:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wd_jonica_a10Or_R;
+                CASE 2:
+                    RETURN wd_jonica_a10Or_C1;
+                CASE 3:
+                    RETURN wd_jonica_a10Or_C2;
+                CASE 4:
+                    RETURN wd_jonica_a10Or_C3;
+                DEFAULT:
+                ENDTEST
+
+            DEFAULT:
+            ENDTEST
+
+        ELSEIF tipoSaldatura="S" THEN
+
+            TEST gola
+
+            CASE 10:
+
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wd_jonica_a10St_R;
+                CASE 2:
+                    RETURN wd_jonica_a10St_C1;
+                CASE 3:
+                    RETURN wd_jonica_a10St_C2;
+                CASE 4:
+                    RETURN wd_jonica_a10St_C3;
+                DEFAULT:
+                    RETURN wd_jonica_a10St_C3;
+                ENDTEST
+
+
+            DEFAULT:
+                RETURN wd_jonica_a10St_R;
+
+            ENDTEST
+        ENDIF
+
+    ENDFUNC
+
+    LOCAL FUNC weavedata GetWeaveDataSaldatura(string tipoSaldatura,num gola,num numeroPassata)
+
+        IF tipoSaldatura="V" THEN
+
+            TEST gola
+            CASE 5:
+                RETURN wv_jonica_a10V_R;
+            CASE 7:
+                RETURN wv_jonica_a7V_R;
+            CASE 10:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wv_jonica_a10V_R;
+                DEFAULT:
+                    RETURN wv_jonica_a10V_C;
+                ENDTEST
+            ENDTEST
+
+
+        ELSEIF tipoSaldatura="O" THEN
+
+            TEST gola
+            CASE 5:
+                RETURN wv_jonica_a10Or_R;
+
+            CASE 7:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wv_jonica_a10Or_R;
+                DEFAULT:
+                    RETURN wv_jonica_a10Or_C;
+                ENDTEST
+
+            CASE 8.5:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wv_jonica_a85Or_R;
+                DEFAULT:
+                    RETURN wv_jonica_a85Or_C;
+                ENDTEST
+
+            CASE 10:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wv_jonica_a10Or_R;
+                DEFAULT:
+                    RETURN wv_jonica_a10Or_C;
+                ENDTEST
+
+            DEFAULT:
+            ENDTEST
+
+        ELSEIF tipoSaldatura="S" THEN
+
+            TEST gola
+            CASE 10:
+                TEST numeroPassata
+                CASE 1:
+                    RETURN wv_jonica_a10St_R;
+                CASE 2:
+                    RETURN wv_jonica_a10St_C;
+                CASE 3:
+                    RETURN wv_jonica_a10St_C;
+                CASE 4:
+                    RETURN wv_jonica_a10St_C4;
+                CASE 5:
+                    RETURN wv_jonica_a10St_C4;
+                CASE 6:
+                    RETURN wv_jonica_a10St_C4;
+                DEFAULT:
+                    RETURN wv_jonica_a10St_C4;
+                ENDTEST
+
+            DEFAULT:
+                RETURN wv_jonica_a10St_R;
+            ENDTEST
+
+
+
+        ENDIF
+    ENDFUNC
+
+    LOCAL FUNC trackdata GetTrackDataSaldatura(string tipoSaldatura,num gola,num numeroPassata)
+
+        IF tipoSaldatura="O" THEN
+            TEST gola
+            CASE 8.5:
+                RETURN tr_jonica_a85Or_R;
+            DEFAULT:
+                RETURN tr_jonica_a10Or_R;
+            ENDTEST
+
+        ELSEIF tipoSaldatura="V" THEN
+            TEST gola
+            CASE 5:
+                RETURN tr_jonica_a10V_R;
+            CASE 7:
+                RETURN tr_jonica_a7V_R;
+            CASE 10:
+                RETURN tr_jonica_a10V_R;
+            DEFAULT:
+                RETURN tr_jonica_a10V_R;
+            ENDTEST
+
+        ELSEIF tipoSaldatura="S" THEN
+            RETURN tr_jonica_a10St_R;
+        ENDIF
+    ENDFUNC
+
+    LOCAL FUNC multidata GetOffestsSaldatura(string tipoSaldatura,num gola,num numeroPassata)
+
+        IF numeroPassata=1 RETURN offCoperture_a7SxDxC1;
+
+        IF tipoSaldatura="O" THEN
+
+            TEST gola
+            CASE 7:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offCoperture_a7SxDxC1;
+                CASE 3:
+                    RETURN offCoperture_a7SxDxC2;
+                DEFAULT:
+                    RETURN offCoperture_a7SxDxC1;
+                ENDTEST
+            CASE 8.5:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offCoperture_a8SxDxC1;
+                CASE 3:
+                    RETURN offCoperture_a8SxDxC2;
+                CASE 4:
+                    RETURN offCoperture_a8SxDxC3;
+                DEFAULT:
+                    RETURN offCoperture_a8SxDxC1;
+                ENDTEST
+
+            CASE 10:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offCoperture_a11SxDxC1;
+                CASE 3:
+                    RETURN offCoperture_a11SxDxC2;
+                CASE 4:
+                    RETURN offCoperture_a11SxDxC3;
+                CASE 5:
+                    RETURN offCoperture_a11SxDxC4;
+                CASE 6:
+                    RETURN offCoperture_a11SxDxC5;
+                DEFAULT:
+                    RETURN offCoperture_a11SxDxC1;
+                ENDTEST
+
+            DEFAULT:
+                RETURN offCoperture_a7SxDxC1;
+            ENDTEST
+
+        ELSEIF tipoSaldatura="V" THEN
+
+            TEST gola
+            CASE 7:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offCoperture_a7C1;
+                CASE 3:
+                    RETURN offCoperture_a7C2;
+                DEFAULT:
+                    RETURN offCoperture_a7C1;
+                ENDTEST
+
+            CASE 10:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offCoperture_a10C1;
+                CASE 3:
+                    RETURN offCoperture_a10C2;
+                DEFAULT:
+                    RETURN offCoperture_a10C1;
+                ENDTEST
+            DEFAULT:
+                RETURN offCoperture_a7C1;
+            ENDTEST
+
+
+        ELSEIF tipoSaldatura="S" THEN
+
+            TEST gola
+            CASE 7:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offsetsovratestaDxSxC1;
+                CASE 3:
+                    RETURN offsetsovratestaDxSxC2;
+                DEFAULT:
+                    RETURN offsetsovratestaDxSxC1;
+                ENDTEST
+
+            CASE 10:
+                TEST numeroPassata
+                CASE 2:
+                    RETURN offsetsovratestaDxSxC1;
+                CASE 3:
+                    RETURN offsetsovratestaDxSxC2;
+                CASE 4:
+                    RETURN offsetsovratestaDxSxC3;
+                CASE 5:
+                    RETURN offsetsovratestaDxSxC4;
+                CASE 6:
+                    RETURN offsetsovratestaDxSxC5;
+                DEFAULT:
+                    RETURN offsetsovratestaDxSxC1;
+                ENDTEST
+
+            ENDTEST
+
+        ENDIF
+    ENDFUNC
+
+    PROC TraslaInX(inout wobjdata workobject,num distanzaInX)
+
+        VAR jointtarget jJoints;
+        VAR extjoint extATTUALE;
+        VAR robtarget jRob;
+
+        jJoints:=CJointT();
+        jRob:=CRobT();
+
+        extATTUALE:=jJoints.extax;
+        extATTUALE.eax_a:=jJoints.extax.eax_a-jRob.extax.eax_a+distanzaInX;
+
+        workobject.oframe.trans.x:=workobject.oframe.trans.x+distanzaInX;
+
+        EOffsSet extATTUALE;
+
+    ENDPROC
+
+    PROC RichiediPulizia()
+        TPWrite "PULIRE LA SCORIA";
+        LampeggianteOn;
+        Stop;
+        LampeggianteOff;
+    ENDPROC
+
+    PROC RiorientaFuoriIngombro(PERS tooldata utensile,PERS wobjdata wobjProgramma,robtarget posizioneDiDestinazione,\switch robotNonSuSlitta)
+
+        VAR jointtarget posizioneAssi;
+        VAR robtarget puntoDiArrivo;
+
+        aHomeDyn;
+
+        !Giro il robot di 90?
+        posizioneAssi:=CJointT();
+        posizioneAssi.extax.eax_a:=posizioneDiDestinazione.extax.eax_a;
+        posizioneAssi.robax.rax_1:=posizioneAssi.robax.rax_1+90;
+        MoveAbsJ posizioneAssi,v600,z50,utensile;
+
+        !Calcolo gli assi nel punto di arrrivo 
+        !aggiungo 90? all'asse 1
+        !Muovo il robot in questa posizione
+        posizioneAssi:=CalcJointT(posizioneDiDestinazione,utensile,\WObj:=wobjProgramma);
+        posizioneAssi.extax.eax_a:=posizioneDiDestinazione.extax.eax_a;
+        posizioneAssi.robax.rax_1:=posizioneAssi.robax.rax_1+90;
+
+        MoveAbsJ posizioneAssi,v600,z50,utensile;
+        !Stop;
+
+        !Sposto l'utensile lungo l'asse X (o Y se non sulla slitta) fino ad andare a 850 dallo zero robot.
+        !Muovo il robot in questa posizione
+        puntoDiArrivo:=CRobT(\Tool:=utensile,\WObj:=wobjProgramma);
+
+        IF Present(robotNonSuSlitta) THEN
+            puntoDiArrivo.trans.y:=-850;
+        ELSE
+            puntoDiArrivo.trans.x:=posizioneDiDestinazione.extax.eax_a+850;
+        ENDIF
+
+        MoveJ puntoDiArrivo,v600,z50,utensile,\WObj:=wobjProgramma;
+        !Stop;
+
+        !Giro il robot sul giunto 1 di 90?
+        posizioneAssi:=CJointT();
+        posizioneAssi.extax.eax_a:=posizioneDiDestinazione.extax.eax_a;
+        posizioneAssi.robax.rax_1:=posizioneAssi.robax.rax_1-90;
+
+        MoveAbsJ posizioneAssi,v600,z50,utensile;
+        !Stop;
+
+    ENDPROC
+
+    PROC SpostaSlitta(num quotaX,PERS tooldata utensile)
+
+        VAR jointTarget jAssi;
+        VAR robtarget rRobot;
+        VAR num zeroSlitta;
+
+        jAssi:=CJointT();
+        rRobot:=CRobT();
+
+        zeroSlitta:=jAssi.extax.eax_a-rRobot.extax.eax_a;
+
+        jAssi.extax.eax_a:=quotaX;
+
+        moveAbsJ jAssi,v400,z10,utensile;
+
+    ENDPROC
+
+    FUNC num MpGetIndexAtLenght(num distanzaPt)
+
+        VAR num distanzaSaldatura;
+
+        IF NOT (MpPathInMemory.IsValid) RETURN -1;
+
+        distanzaSaldatura:=Distance(MpPathInMemory.LastPoint.trans,MpPathInMemory.FirstPoint.trans);
+        distanzaPt:=Abs(distanzaPt);
+
+        IF distanzaPt>distanzaSaldatura RETURN MpPathInMemory.LastIndex;
+
+        RETURN ROUND(MpPathInMemory.LastIndex/distanzaSaldatura*distanzaPt,\Dec:=0);
+
+    ENDFUNC
+
+
+ENDMODULE
